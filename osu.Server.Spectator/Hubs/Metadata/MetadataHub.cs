@@ -162,27 +162,21 @@ namespace osu.Server.Spectator.Hubs.Metadata
 
         public async Task BeginWatchingUserPresence()
         {
-            foreach (var userState in GetAllStates())
+            var states = GetAllStates();
+            foreach (var batch in states.Where(state => state.Value.UserStatus != UserStatus.Offline).Chunk(8))
             {
-                if (userState.Value.UserStatus != UserStatus.Offline)
+                await Task.WhenAll(batch.Select(async userState =>
                 {
                     await Clients.Caller.UserPresenceUpdated(userState.Value.UserId, userState.Value.ToUserPresence());
-
-                    // Torii: also seed the caller's verified-client-name table for everyone
-                    // currently online. Without this, the caller wouldn't see badges until
-                    // each peer's next presence update — fine over time, awkward right after
-                    // connecting. Sent via the raw IHubContext (rather than Clients.Caller)
-                    // because UserClientNameUpdated is a custom SignalR event not on the
-                    // strongly-typed IMetadataClient interface.
                     string? clientName = toriiClientNameResolver.Resolve(userState.Value.VersionHash);
                     await hubContext.Clients.Client(Context.ConnectionId).SendAsync("UserClientNameUpdated", userState.Value.UserId, clientName);
-                }
+                }));
             }
 
             // Si el fundador no estaba en la vuelta de arriba es porque no esta
             // conectado. Se lo manda igual: el que abre la lista de online lo tiene que
             // ver ahi, este jugando o no.
-            if (!GetAllStates().Any(state => state.Value.UserId == founder_user_id
+            if (!states.Any(state => state.Value.UserId == founder_user_id
                                              && state.Value.UserStatus != UserStatus.Offline))
             {
                 await Clients.Caller.UserPresenceUpdated(founder_user_id, founder_idle_presence);

@@ -122,6 +122,23 @@ namespace osu.Server.Spectator.Hubs.Multiplayer.Matchmaking.Queue
             return n;
         }
 
+        private Dictionary<uint, int> getLiveMatchCounts()
+        {
+            var counts = new Dictionary<uint, int>();
+            foreach ((_, ServerMultiplayerRoom? room) in rooms.GetAllEntities())
+            {
+                if (room?.MatchController is not RankedPlayMatchController rp)
+                    continue;
+
+                if (rp.State.Stage == RankedPlayStage.WaitForJoin || rp.State.Stage == RankedPlayStage.Ended)
+                    continue;
+
+                counts[rp.PoolId] = counts.GetValueOrDefault(rp.PoolId) + 1;
+            }
+
+            return counts;
+        }
+
         public async Task<string> GetLiveMatchesJsonAsync(int poolId)
         {
             var salidas = new List<object>();
@@ -475,9 +492,11 @@ namespace osu.Server.Spectator.Hubs.Multiplayer.Matchmaking.Queue
             if (DateTimeOffset.Now - lastLobbyUpdateTime < lobby_update_rate)
                 return;
 
+            Dictionary<uint, int>? liveMatchCounts = null;
             foreach ((int poolId, MatchmakingLobby lobby) in poolLobbies)
             {
                 await lobby.Update();
+                liveMatchCounts ??= getLiveMatchCounts();
 
                 // El conteo de partidas en curso va PEGADO al update del lobby, en la
                 // misma tanda de cada 5 segundos, y no como stream propio: es un entero,
@@ -486,7 +505,7 @@ namespace osu.Server.Spectator.Hubs.Multiplayer.Matchmaking.Queue
                 //
                 // Por nombre de metodo asi es aditivo: un cliente que no lo conoce
                 // simplemente no lo escucha.
-                int enCurso = contarPartidasEnCurso(poolId);
+                int enCurso = liveMatchCounts.GetValueOrDefault((uint)poolId);
 
                 await hub.Clients.Group($"matchmaking-lobby-users:{poolId}")
                          .SendAsync("RankedPlayLiveMatchCount", poolId, enCurso);
